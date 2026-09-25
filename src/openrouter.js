@@ -1,6 +1,13 @@
 const URL = "https://openrouter.ai/api/v1/chat/completions";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Statuses that describe one model's answer rather than the account, so the next
+// model in the rotation is worth trying. Anything outside this set and below 500
+// throws, because it would fail identically on every model. 401 and 402 are
+// deliberately absent: a bad key or an empty balance is the account, not the
+// model, and retrying those just spends the run's budget to fail again.
+const RETRYABLE = [400, 403, 404, 429];
+
 const NUDGE = {
   role: "system",
   content:
@@ -39,10 +46,18 @@ export async function complete({ apiKey, models, messages, accept = (t) => t, at
     });
     const body = await res.text();
     if (!res.ok) {
-      // 400 and 404 are what a model that left the free list or cannot take
-      // this prompt answers; the next model may not. Auth and credit errors
-      // would fail the same way on every model.
-      if (![400, 404, 429].includes(res.status) && res.status < 500) throw new Error(`OpenRouter ${res.status}: ${body.slice(0, 500)}`);
+      // Every status below is something the next model can answer differently.
+      // 400 and 404 are what a model that left the free list answers, or one
+      // that cannot take this prompt. 429 is a rate limit and clears.
+      //
+      // 403 belongs here too, and its absence killed a real run. OpenRouter
+      // answers 403 when a model is gated to agentic harnesses, naming the
+      // harness it wants. That is a fact about one model, not about the key, so
+      // it must not throw: throwing on it abandoned the review entirely, after
+      // three earlier attempts had already failed for unrelated reasons, and the
+      // log ended on a 403 that read like a permissions problem. Auth and credit
+      // errors still throw, since those fail the same way on every model.
+      if (!RETRYABLE.includes(res.status) && res.status < 500) throw new Error(`OpenRouter ${res.status}: ${body.slice(0, 500)}`);
       last = `${model} ${res.status}: ${body.slice(0, 300)}`;
       continue;
     }

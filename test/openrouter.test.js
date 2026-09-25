@@ -59,3 +59,27 @@ test("each attempt goes to the next model, and a missing model is skipped", asyn
   assert.deepEqual(value, { text: "ok" });
   assert.deepEqual(calls.map((c) => c.model), ["a", "b", "a"]);
 });
+
+test("a model gated to a harness is skipped, not treated as a dead key", async (t) => {
+  // The exact answer OpenRouter gives for a model only available inside an
+  // agentic harness. The message names a harness, which makes it a fact about
+  // that one model. Treating it as fatal abandoned a real review, and the log
+  // ended on a 403 that read like a permissions problem with the key.
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  const calls = stub([
+    new Response(JSON.stringify({ error: { message: "thinkingmachines/inkling:free is only available on agentic harnesses." } }), { status: 403 }),
+    reply("ok"),
+  ]);
+  const { value } = await run((text) => (text === "ok" ? { text } : null));
+  assert.deepEqual(value, { text: "ok" });
+  assert.equal(calls.length, 2);
+});
+
+test("an empty balance still throws, because that is the account not the model", async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => (globalThis.fetch = original));
+  const calls = stub([new Response("insufficient credits", { status: 402 })]);
+  await assert.rejects(run(() => null), /OpenRouter 402/);
+  assert.equal(calls.length, 1);
+});
